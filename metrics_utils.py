@@ -2,7 +2,7 @@
 Metric utilities for partition-weighted local learning experiments.
 
 The functions in this module compute regression and classification scores,
-convert metric dictionaries to tables, and write experiment results to disk.
+combine metric values with experiment metadata, and write result tables to disk.
 """
 
 from __future__ import annotations
@@ -15,13 +15,11 @@ import numpy as np
 import pandas as pd
 
 
-_EPS = 1e-12
+_EPS = 1.0e-12
 
 
 def regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
-    """
-    Compute standard regression metrics.
-    """
+    """Compute mean squared error, root mean squared error, MAE, and R squared."""
     y_true_arr = np.asarray(y_true, dtype=float).reshape(-1)
     y_pred_arr = np.asarray(y_pred, dtype=float).reshape(-1)
 
@@ -50,9 +48,7 @@ def classification_metrics(
     y_pred: np.ndarray | None = None,
     proba: np.ndarray | None = None,
 ) -> dict[str, float]:
-    """
-    Compute accuracy and cross entropy for multiclass classification.
-    """
+    """Compute accuracy and cross entropy for multiclass classification."""
     y_true_arr = np.asarray(y_true).reshape(-1)
 
     if proba is not None:
@@ -86,9 +82,7 @@ def classification_metrics(
 
 
 def softmax(logits: np.ndarray, axis: int = 1) -> np.ndarray:
-    """
-    Convert logits to normalized probabilities.
-    """
+    """Convert logits to normalized probabilities."""
     logits_arr = np.asarray(logits, dtype=float)
     shifted = logits_arr - np.max(logits_arr, axis=axis, keepdims=True)
     exp_values = np.exp(shifted)
@@ -96,9 +90,7 @@ def softmax(logits: np.ndarray, axis: int = 1) -> np.ndarray:
 
 
 def one_hot(y: np.ndarray, n_classes: int | None = None) -> np.ndarray:
-    """
-    Convert integer class labels to a one-hot matrix.
-    """
+    """Convert integer class labels to a one-hot matrix."""
     y_arr = np.asarray(y, dtype=int).reshape(-1)
     if n_classes is None:
         n_classes = int(np.max(y_arr)) + 1
@@ -111,25 +103,34 @@ def one_hot(y: np.ndarray, n_classes: int | None = None) -> np.ndarray:
 
 
 def add_run_metadata(metrics: Mapping[str, Any], **metadata: Any) -> dict[str, Any]:
-    """
-    Combine experiment metadata and metric values in one dictionary.
-    """
+    """Combine experiment metadata and metric values in one dictionary."""
     row: dict[str, Any] = dict(metadata)
     row.update(dict(metrics))
     return row
 
 
+def make_result_row(
+    metadata: Mapping[str, Any] | None = None,
+    metrics: Mapping[str, Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Create one flat result row from metadata, metric values, and extra fields."""
+    row: dict[str, Any] = {}
+    if metadata is not None:
+        row.update(dict(metadata))
+    if metrics is not None:
+        row.update(dict(metrics))
+    row.update(extra)
+    return row
+
+
 def rows_to_frame(rows: Iterable[Mapping[str, Any]]) -> pd.DataFrame:
-    """
-    Convert experiment rows to a pandas DataFrame.
-    """
+    """Convert experiment rows to a pandas DataFrame."""
     return pd.DataFrame(list(rows))
 
 
 def save_results(rows: Iterable[Mapping[str, Any]], output_path: str | Path) -> pd.DataFrame:
-    """
-    Save experiment rows as CSV and return the DataFrame.
-    """
+    """Save experiment rows as CSV and return the DataFrame."""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     frame = rows_to_frame(rows)
@@ -138,9 +139,7 @@ def save_results(rows: Iterable[Mapping[str, Any]], output_path: str | Path) -> 
 
 
 def append_result(row: Mapping[str, Any], output_path: str | Path) -> pd.DataFrame:
-    """
-    Append one experiment row to a CSV result table.
-    """
+    """Append one experiment row to a CSV result table."""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     new_row = pd.DataFrame([dict(row)])
@@ -156,18 +155,14 @@ def append_result(row: Mapping[str, Any], output_path: str | Path) -> pd.DataFra
 
 
 def save_json(data: Mapping[str, Any], output_path: str | Path) -> None:
-    """
-    Save a dictionary as formatted JSON.
-    """
+    """Save a dictionary as formatted JSON."""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(dict(data), indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def load_result_table(path: str | Path) -> pd.DataFrame:
-    """
-    Load a CSV result table.
-    """
+    """Load a CSV result table."""
     return pd.read_csv(path)
 
 
@@ -176,9 +171,7 @@ def select_best_row(
     metric: str,
     higher_is_better: bool = False,
 ) -> pd.Series:
-    """
-    Select the best row according to one metric column.
-    """
+    """Select the best row according to one metric column."""
     if metric not in frame.columns:
         raise KeyError(f"Metric column not found: {metric}")
     idx = frame[metric].idxmax() if higher_is_better else frame[metric].idxmin()
@@ -191,14 +184,38 @@ def summarize_by_group(
     metric: str,
     higher_is_better: bool = False,
 ) -> pd.DataFrame:
-    """
-    Select the best row inside each group.
-    """
+    """Select the best row inside each group."""
     if not group_cols:
         raise ValueError("group_cols must contain at least one column name.")
     for col in group_cols + [metric]:
         if col not in frame.columns:
             raise KeyError(f"Column not found: {col}")
 
-    idx = frame.groupby(group_cols, dropna=False)[metric].idxmax() if higher_is_better else frame.groupby(group_cols, dropna=False)[metric].idxmin()
+    grouped = frame.groupby(group_cols, dropna=False)[metric]
+    idx = grouped.idxmax() if higher_is_better else grouped.idxmin()
     return frame.loc[idx.to_numpy()].reset_index(drop=True)
+
+
+def percentage_change(before: float, after: float) -> float:
+    """Return the relative percentage change from before to after."""
+    if abs(before) <= _EPS:
+        return float("nan")
+    return float((after - before) / before * 100.0)
+
+
+__all__ = [
+    "regression_metrics",
+    "classification_metrics",
+    "softmax",
+    "one_hot",
+    "add_run_metadata",
+    "make_result_row",
+    "rows_to_frame",
+    "save_results",
+    "append_result",
+    "save_json",
+    "load_result_table",
+    "select_best_row",
+    "summarize_by_group",
+    "percentage_change",
+]
