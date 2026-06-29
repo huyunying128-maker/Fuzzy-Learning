@@ -1,133 +1,75 @@
 # Fuzzy Partition-Weighted Local Learning
 
-This repository contains reproducible code for the paper **Fuzzy Partition-Weighted Local Learning for Regression and Classification**.
+This repository contains the code accompanying the article **Fuzzy Partition-Weighted Local Learning for Regression and Classification**. The code is organized by the same modeling path used in the article: data preparation, partition learning, local regression and classification, external feature-layer comparisons, appendix examples, and figure/table generation.
 
-The implementation covers partition learning, membership-weighted local inputs, local polynomial regression, local logit classification, partition-weighted feature layers, and five truncation rules: distance-table difference, harmonic distance-change control, square probability, Shannon entropy, and hereditary partition distance.
-
-## Repository structure
+## Repository layout
 
 ```text
-.
-├── fpwl_core.py
-├── truncation_rules.py
-├── feature_layer.py
-├── metrics_utils.py
-├── run_all_experiments.py
+fuzzy-partition-weighted-learning/
 ├── dataset/
-│   ├── download_datasets.py
-│   ├── prepare_regression_data.py
-│   └── prepare_mnist_data.py
+├── core/
 ├── regression/
-│   ├── regression_config.py
-│   ├── run_global_polynomial_baselines.py
-│   ├── run_local_regression_models.py
-│   ├── run_pw_regression_baselines.py
-│   └── summarize_regression_results.py
-└── classification/
-    ├── classification_config.py
-    ├── run_mnist_local_logit.py
-    ├── run_mnist_pw_classifiers.py
-    ├── run_mnist_centroid_visualization.py
-    └── summarize_classification_results.py
+├── classification/
+├── appendix_examples/
+├── results_and_figures/
+├── README.md
+├── requirements.txt
+└── run_all.py
 ```
 
-## Installation
+The `dataset/` folder prepares Concrete, Superconductivity, and MNIST data and creates reproducible train, validation, and test splits. The `core/` folder contains the shared implementation of distance tables, crisp and fuzzy memberships, truncation rules, local polynomial and logit models, modified k-means references, and the partition-weighted feature layer. The `regression/` folder reproduces the Concrete and Superconductivity regression experiments. The `classification/` folder reproduces the MNIST clustering-only, raw-logit, local-logit, feature-layer, external-classifier, and centroid-standardization experiments. The `appendix_examples/` folder reproduces the numerical examples for crisp and fuzzy clustering. The `results_and_figures/` folder exports the article tables and figures.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+## Parameter grids
+
+The partition parameters are searched in the same form across the main scripts.
+
+- `k` is searched from `2` to `floor(n / 10)`, where `n` is the training-sample size.
+- `p` is searched from `1.00` to `10.00` with step size `0.05`.
+- `f` is searched from `1.00` to `10.00` with step size `0.05`.
+- Polynomial or logit degree is evaluated as a fixed setting from `1` to `4`.
+
+For large experiments, the scripts also accept reduced candidate lists so that a short reproducibility run can be performed before a full grid run.
+
+## Main code groups
+
+| Folder | Files | Main role |
+|---|---:|---|
+| `dataset/` | `01–05` | Dataset preparation, splitting, and dataset summary |
+| `core/` | `01–11` | Shared partition, membership, truncation, local model, and feature-layer routines |
+| `regression/` | `01–10` | Concrete and Superconductivity regression experiments |
+| `classification/` | `01–09` | MNIST classification and membership-centroid experiments |
+| `appendix_examples/` | `01–04` | Numerical crisp and fuzzy clustering examples |
+| `results_and_figures/` | `01–06` | Article tables, plots, external-model figures, and cross-dataset summary |
+
+## Typical workflow
+
+The scripts can be run one file at a time. The top-level `run_all.py` file provides a single entry point for running selected stages. The staged format keeps the outputs inspectable and makes it possible to reproduce only one dataset or one article block when needed.
+
+Prepared data are written under `data/processed/`. Split arrays are written under `data/splits/`. Experiment outputs are written under `outputs/`. Figures are written under `outputs/figures/`.
+
+## Output files
+
+The main regression runners write combined tables under:
+
+```text
+outputs/regression/concrete/concrete_regression_all_results.csv
+outputs/regression/superconductivity/superconductivity_regression_all_results.csv
 ```
 
-On Windows PowerShell, the environment activation command is:
+The MNIST runner writes combined classification tables under:
 
-```powershell
-.venv\Scripts\Activate.ps1
+```text
+outputs/classification/mnist/09_mnist_all_results_long.csv
+outputs/classification/mnist/09_mnist_best_rows.csv
 ```
 
-## Data
+The final cross-dataset summary is written under:
 
-The regression experiments use the concrete compressive strength dataset and the superconductivity critical-temperature dataset. The MNIST classification scripts use the TensorFlow Keras or OpenML MNIST loader.
-
-```bash
-python dataset/download_datasets.py
-python dataset/prepare_regression_data.py --dataset concrete --input data/raw/Concrete_Data.xls --output data/processed/concrete_regression.npz
-python dataset/prepare_mnist_data.py --output data/processed/mnist_classification.npz
+```text
+outputs/summary/06_cross_dataset_article_summary.csv
+outputs/figures/cross_dataset/06_cross_dataset_best_rows.png
 ```
 
-## Regression experiments
+## Notes on reproducibility
 
-Global polynomial baselines:
-
-```bash
-python regression/run_global_polynomial_baselines.py --dataset concrete --degrees 1,2,3,4
-```
-
-Crisp and fuzzy local regression models:
-
-```bash
-python regression/run_local_regression_models.py --dataset concrete --partitions crisp,fuzzy --degrees 1,2,3,4 --truncations dtd,harmonic,sp,entropy,hpd --grid-mode quick
-```
-
-External regressors with the partition-weighted feature layer:
-
-```bash
-python regression/run_pw_regression_baselines.py --dataset concrete --models random_forest,xgboost
-```
-
-Regression summaries:
-
-```bash
-python regression/summarize_regression_results.py
-```
-
-## Classification experiments
-
-MNIST local-logit models:
-
-```bash
-python classification/run_mnist_local_logit.py --degrees 1 --partitions crisp,fuzzy --truncations hpd --k-values 10
-```
-
-MNIST external classifiers with the partition-weighted feature layer:
-
-```bash
-python classification/run_mnist_pw_classifiers.py --classifiers ann,random_forest --k 10
-```
-
-MNIST centroid-standardization visualization:
-
-```bash
-python classification/run_mnist_centroid_visualization.py
-```
-
-Classification summaries:
-
-```bash
-python classification/summarize_classification_results.py
-```
-
-## Compact workflow
-
-A compact workflow is available for quick reproducibility checks:
-
-```bash
-python run_all_experiments.py --dataset concrete --mnist-samples 2000
-```
-
-The compact workflow uses small default grids and a limited MNIST sample size. Larger paper-scale searches can be launched through the individual experiment scripts by changing the grids in the configuration files or command-line arguments.
-
-## Outputs
-
-Result tables are written under `results/`. Processed NumPy bundles are written under `data/processed/`. Public raw data are stored under `data/raw/`.
-
-## Main modules
-
-- `fpwl_core.py`: crisp and fuzzy partition learning.
-- `truncation_rules.py`: DTD, harmonic, SP, entropy, and HPD stopping rules.
-- `feature_layer.py`: membership-weighted local inputs and partition-weighted feature layers.
-- `metrics_utils.py`: regression and classification metrics.
-
-## License
-
-The code is intended for academic research and reproducibility. A repository-level license file can be added according to the publication or institution policy.
+The default split uses an 80/20 held-out test design with a validation portion inside the training data. Numerical variables in the tabular datasets are standardized from the training split and then transformed consistently across validation and test data. MNIST pixels are scaled to `[0, 1]` before partition learning and classification.
