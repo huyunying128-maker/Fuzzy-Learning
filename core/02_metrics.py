@@ -1,9 +1,11 @@
 """
 Evaluation metrics for regression and classification experiments.
 
-Regression tables report MSE, RMSE, MAE, and R-squared. Classification tables
-report accuracy and cross entropy. These utilities keep the metric calculation
-consistent across the local models and the external machine-learning baselines.
+All regression metrics are computed from the same target/prediction vectors.
+The returned population target variance makes the identity
+R2 = 1 - MSE / Var(y_true) auditable across methods evaluated on the same test
+set. This is useful for detecting tables assembled from inconsistent splits or
+scales.
 """
 
 from __future__ import annotations
@@ -17,22 +19,27 @@ EPSILON = 1e-12
 
 
 def regression_metrics(y_true, y_pred) -> Dict[str, float]:
-    """Compute the regression metrics reported in the experiment tables."""
+    """Compute consistent regression metrics from one shared evaluation vector."""
     y_true = np.asarray(y_true, dtype=float).reshape(-1)
     y_pred = np.asarray(y_pred, dtype=float).reshape(-1)
     if y_true.shape[0] != y_pred.shape[0]:
         raise ValueError("y_true and y_pred must have the same length.")
+    if y_true.size == 0:
+        raise ValueError("y_true and y_pred must not be empty.")
+    if not np.all(np.isfinite(y_true)) or not np.all(np.isfinite(y_pred)):
+        raise ValueError("y_true and y_pred must contain only finite values.")
 
     residual = y_true - y_pred
     mse = float(np.mean(residual ** 2))
     rmse = float(np.sqrt(mse))
     mae = float(np.mean(np.abs(residual)))
+    target_variance = float(np.mean((y_true - np.mean(y_true)) ** 2))
 
-    total = float(np.sum((y_true - np.mean(y_true)) ** 2))
-    if total <= EPSILON:
+    if target_variance <= EPSILON:
         r2 = float("nan")
     else:
-        r2 = float(1.0 - np.sum(residual ** 2) / total)
+        # Equivalent to 1 - SSE/SST, expressed via the population variance.
+        r2 = float(1.0 - mse / target_variance)
 
     return {
         "n": int(y_true.shape[0]),
@@ -40,6 +47,7 @@ def regression_metrics(y_true, y_pred) -> Dict[str, float]:
         "rmse": rmse,
         "mae": mae,
         "r2": r2,
+        "target_variance": target_variance,
     }
 
 
@@ -48,17 +56,23 @@ def softmax(logits) -> np.ndarray:
     logits = np.asarray(logits, dtype=float)
     if logits.ndim != 2:
         raise ValueError("logits must be a two-dimensional array.")
+    if logits.shape[0] == 0 or logits.shape[1] == 0:
+        raise ValueError("logits must have at least one row and one class.")
+    if not np.all(np.isfinite(logits)):
+        raise ValueError("logits must contain only finite values.")
     centered = logits - np.max(logits, axis=1, keepdims=True)
-    exp_values = np.exp(centered)
+    exp_values = np.exp(np.clip(centered, -700.0, 700.0))
     return exp_values / np.sum(exp_values, axis=1, keepdims=True)
 
 
 def one_hot(labels, n_classes: Optional[int] = None) -> np.ndarray:
     """Create a one-hot label matrix from integer class labels."""
     labels = np.asarray(labels, dtype=int).reshape(-1)
+    if labels.size == 0:
+        raise ValueError("labels must not be empty.")
     if n_classes is None:
         n_classes = int(np.max(labels)) + 1
-    if np.any(labels < 0) or np.any(labels >= n_classes):
+    if n_classes < 1 or np.any(labels < 0) or np.any(labels >= n_classes):
         raise ValueError("labels must be between 0 and n_classes - 1.")
 
     out = np.zeros((labels.shape[0], n_classes), dtype=float)
@@ -75,6 +89,14 @@ def cross_entropy_from_probabilities(y_true, probabilities) -> float:
     labels = np.asarray(y_true, dtype=int).reshape(-1)
     if labels.shape[0] != probabilities.shape[0]:
         raise ValueError("y_true and probabilities must have the same number of rows.")
+    if labels.size == 0:
+        raise ValueError("y_true must not be empty.")
+    if np.any(labels < 0) or np.any(labels >= probabilities.shape[1]):
+        raise ValueError("Labels must index the columns of probabilities.")
+    if not np.all(np.isfinite(probabilities)):
+        raise ValueError("probabilities must contain only finite values.")
+    if np.any(probabilities < 0):
+        raise ValueError("probabilities must be nonnegative.")
 
     clipped = np.clip(probabilities, EPSILON, 1.0)
     clipped = clipped / np.sum(clipped, axis=1, keepdims=True)
@@ -82,11 +104,15 @@ def cross_entropy_from_probabilities(y_true, probabilities) -> float:
 
 
 def classification_metrics(y_true, probabilities=None, predicted_labels=None) -> Dict[str, float]:
-    """Compute accuracy and, when probabilities are available, cross entropy."""
+    """Compute accuracy and, when available, cross entropy."""
     labels = np.asarray(y_true, dtype=int).reshape(-1)
+    if labels.size == 0:
+        raise ValueError("y_true must not be empty.")
 
     if probabilities is not None:
         probabilities = np.asarray(probabilities, dtype=float)
+        if probabilities.ndim != 2:
+            raise ValueError("probabilities must be a two-dimensional array.")
         predicted = np.argmax(probabilities, axis=1)
         ce = cross_entropy_from_probabilities(labels, probabilities)
     elif predicted_labels is not None:

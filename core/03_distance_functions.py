@@ -1,9 +1,9 @@
 """
 Distance-table utilities for crisp, fuzzy, and modified k-means partitions.
 
-The partition layer uses a full table of distances between observations and
-centroids. The same table supports nearest-centroid labels, fuzzy membership
-construction, and distance-based truncation rules.
+For large sample/cluster/feature combinations, pairwise distances are computed
+in adaptive row chunks. This bounds temporary memory while preserving the same
+Minkowski distance values as the full broadcast calculation.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import numpy as np
 
 
 EPSILON = 1e-12
+MAX_TEMPORARY_ELEMENTS = 8_000_000
 
 
 def _as_2d_float(array, name: str) -> np.ndarray:
@@ -23,21 +24,59 @@ def _as_2d_float(array, name: str) -> np.ndarray:
     return value
 
 
-def minkowski_distance_matrix(X, centroids, p: float = 2.0, chunk_size: Optional[int] = None) -> np.ndarray:
-    """Compute the pairwise Minkowski distance table between X and centroids."""
+def minkowski_distance_matrix(
+    X,
+    centroids,
+    p: float = 2.0,
+    chunk_size: Optional[int] = None,
+    max_temporary_elements: int = MAX_TEMPORARY_ELEMENTS,
+) -> np.ndarray:
+    """Compute pairwise Minkowski distances with an adaptive memory bound.
+
+    Parameters
+    ----------
+    X:
+        Observation matrix with shape (n_samples, n_features).
+    centroids:
+        Centroid matrix with shape (n_clusters, n_features).
+    p:
+        Minkowski distance order; must be at least one.
+    chunk_size:
+        Optional number of observations processed per chunk. When omitted,
+        chunking is selected automatically if the broadcast temporary would
+        exceed ``max_temporary_elements``.
+    max_temporary_elements:
+        Approximate upper bound on the number of floating-point elements in
+        the temporary difference tensor when ``chunk_size`` is omitted.
+    """
     X = _as_2d_float(X, "X")
     centroids = _as_2d_float(centroids, "centroids")
     if X.shape[1] != centroids.shape[1]:
         raise ValueError("X and centroids must have the same number of columns.")
     if p < 1.0:
         raise ValueError("Minkowski distance order p must be at least 1.")
+    if X.shape[0] == 0:
+        return np.empty((0, centroids.shape[0]), dtype=float)
+    if centroids.shape[0] == 0:
+        raise ValueError("centroids must contain at least one row.")
 
-    if chunk_size is None or chunk_size >= X.shape[0]:
+    if chunk_size is None:
+        if max_temporary_elements < 1:
+            raise ValueError("max_temporary_elements must be positive.")
+        elements_per_observation = max(1, centroids.shape[0] * X.shape[1])
+        estimated_elements = X.shape[0] * elements_per_observation
+        if estimated_elements > max_temporary_elements:
+            chunk_size = max(1, int(max_temporary_elements // elements_per_observation))
+        else:
+            chunk_size = X.shape[0]
+    elif chunk_size < 1:
+        raise ValueError("chunk_size must be positive when it is provided.")
+    else:
+        chunk_size = min(int(chunk_size), X.shape[0])
+
+    if chunk_size >= X.shape[0]:
         diff = np.abs(X[:, None, :] - centroids[None, :, :])
         return np.sum(diff ** p, axis=2) ** (1.0 / p)
-
-    if chunk_size < 1:
-        raise ValueError("chunk_size must be positive when it is provided.")
 
     distances = np.empty((X.shape[0], centroids.shape[0]), dtype=float)
     for start in range(0, X.shape[0], chunk_size):
@@ -81,7 +120,7 @@ def distance_objective(distance_table, labels=None) -> float:
     else:
         labels = np.asarray(labels, dtype=int).reshape(-1)
         if labels.shape[0] != distance_table.shape[0]:
-            raise ValueError("labels must have one entry for each distance-table row.")
+            raise ValueError("labels must have one entry for each observation.")
         selected = distance_table[np.arange(distance_table.shape[0]), labels]
     return float(np.mean(selected ** 2))
 
